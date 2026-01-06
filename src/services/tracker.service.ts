@@ -701,31 +701,42 @@ class TrackerService {
 
       const toDelete = totalCount - maxMatches;
 
-      // Delete oldest FINISHED matches first (keep live matches)
-      // Order by detection_time ASC to get oldest first
-      const deleteStmt = db.prepare(`
-        DELETE FROM matches WHERE id IN (
-          SELECT id FROM matches
-          WHERE status = 'finished'
-          ORDER BY detection_time ASC
-          LIMIT ?
-        )
+      // First, get the match_ids that will be deleted
+      const matchesToDelete = db.prepare(`
+        SELECT match_id FROM matches
+        WHERE status = 'finished'
+        ORDER BY detection_time ASC
+        LIMIT ?
+      `).all(toDelete) as Array<{ match_id: string }>;
+
+      if (matchesToDelete.length === 0) {
+        return;
+      }
+
+      const matchIds = matchesToDelete.map(m => m.match_id);
+
+      // Delete odds_history FIRST (before deleting matches to avoid FK constraint)
+      const deleteOddsStmt = db.prepare(`
+        DELETE FROM odds_history WHERE match_id = ?
       `);
+      let oddsDeleted = 0;
+      for (const matchId of matchIds) {
+        const result = deleteOddsStmt.run(matchId);
+        oddsDeleted += result.changes;
+      }
 
-      const result = deleteStmt.run(toDelete);
+      // Now delete the matches
+      const deleteMatchStmt = db.prepare(`
+        DELETE FROM matches WHERE match_id = ?
+      `);
+      let matchesDeleted = 0;
+      for (const matchId of matchIds) {
+        const result = deleteMatchStmt.run(matchId);
+        matchesDeleted += result.changes;
+      }
 
-      if (result.changes > 0) {
-        console.log(`[Tracker] Rolling DB: Deleted ${result.changes} oldest finished matches (limit: ${maxMatches})`);
-
-        // Also clean up orphaned odds_history records
-        const cleanupStmt = db.prepare(`
-          DELETE FROM odds_history
-          WHERE match_id NOT IN (SELECT match_id FROM matches)
-        `);
-        const cleanupResult = cleanupStmt.run();
-        if (cleanupResult.changes > 0) {
-          console.log(`[Tracker] Cleaned up ${cleanupResult.changes} orphaned odds_history records`);
-        }
+      if (matchesDeleted > 0) {
+        console.log(`[Tracker] Rolling DB: Deleted ${matchesDeleted} oldest finished matches, ${oddsDeleted} odds records (limit: ${maxMatches})`);
       }
     } catch (error) {
       console.error('[Tracker] Error enforcing match limit:', error);
