@@ -763,9 +763,9 @@ class TrackerService {
     );
     const totalMatches = (totalStmt.get(leagueId) as any).count;
 
-    // Get DISTINCT goal lines per match (count each goal line only once per match)
+    // Get unique goal lines per match using GROUP BY (count each goal line only once per match)
     const oddsStmt = db.prepare(`
-      SELECT DISTINCT
+      SELECT
         oh.match_id,
         oh.handicap,
         m.final_score_home,
@@ -773,6 +773,7 @@ class TrackerService {
       FROM odds_history oh
       JOIN matches m ON oh.match_id = m.match_id
       WHERE m.league_id = ? AND m.status = 'finished' AND oh.handicap IS NOT NULL
+      GROUP BY oh.match_id, oh.handicap
     `);
 
     const oddsRows = oddsStmt.all(leagueId) as Array<{
@@ -785,22 +786,10 @@ class TrackerService {
     // Group by goal line and calculate stats
     const goalLineMap = new Map<number, { total: number; hits: number }>();
 
-    // Track unique match-goalline combinations to avoid double counting
-    const seenCombinations = new Set<string>();
-
     for (const row of oddsRows) {
       if (row.handicap === null || row.final_score_home === null || row.final_score_away === null) {
         continue;
       }
-
-      // Create a unique key for match + goalline combination
-      const combinationKey = `${row.match_id}-${row.handicap}`;
-
-      // Skip if we've already counted this goalline for this match
-      if (seenCombinations.has(combinationKey)) {
-        continue;
-      }
-      seenCombinations.add(combinationKey);
 
       const goalLine = row.handicap;
       const totalGoals = row.final_score_home + row.final_score_away;
