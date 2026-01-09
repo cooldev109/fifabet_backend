@@ -757,13 +757,14 @@ class TrackerService {
       roi: number;
     }>;
   } {
-    // Get total finished matches for this league
+    // Get total finished matches for this league (only those with valid final scores)
     const totalStmt = db.prepare(
-      "SELECT COUNT(*) as count FROM matches WHERE league_id = ? AND status = 'finished'"
+      "SELECT COUNT(*) as count FROM matches WHERE league_id = ? AND status = 'finished' AND final_score_home IS NOT NULL AND final_score_away IS NOT NULL"
     );
     const totalMatches = (totalStmt.get(leagueId) as any).count;
 
     // Get unique goal lines per match using GROUP BY (count each goal line only once per match)
+    // Only include finished matches with valid final scores
     const oddsStmt = db.prepare(`
       SELECT
         oh.match_id,
@@ -772,7 +773,11 @@ class TrackerService {
         m.final_score_away
       FROM odds_history oh
       JOIN matches m ON oh.match_id = m.match_id
-      WHERE m.league_id = ? AND m.status = 'finished' AND oh.handicap IS NOT NULL
+      WHERE m.league_id = ?
+        AND m.status = 'finished'
+        AND m.final_score_home IS NOT NULL
+        AND m.final_score_away IS NOT NULL
+        AND oh.handicap IS NOT NULL
       GROUP BY oh.match_id, oh.handicap
     `);
 
